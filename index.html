@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e0f0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Fullbody">
+<meta name="format-detection" content="telephone=no">
+<meta name="robots" content="noindex, nofollow">
+<title>Fullbody</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="appbar">
+  <div class="appbar-row">
+    <div>
+      <div class="brand">Fullbody</div>
+      <div class="sub" id="todayLabel"></div>
+    </div>
+    <div class="weekbadge" id="weekBadge">Неделя 1</div>
+  </div>
+</header>
+
+<main>
+  <section id="workoutView">
+    <div class="weeks" id="weekChips" aria-label="Неделя"></div>
+    <div class="workouts" id="workoutTabs" aria-label="Тренировка"></div>
+
+    <div class="note" id="noteBox"></div>
+
+    <div class="list" id="exerciseList"></div>
+  </section>
+
+  <section id="historyView" hidden>
+    <div class="history-head">
+      <h2>История</h2>
+      <div class="history-actions">
+        <button class="ghost" id="exportBtn">Экспорт</button>
+        <label class="ghost">Импорт<input type="file" id="importInput" accept="application/json" hidden></label>
+      </div>
+    </div>
+    <div id="historyList"></div>
+    <div class="empty" id="historyEmpty">Пока нет завершённых тренировок.</div>
+    <button class="danger" id="resetBtn">Сбросить все данные</button>
+  </section>
+</main>
+
+<div class="progressbar" id="progressBar">
+  <div class="progress-text"><span id="progressLabel">0 из 0</span><span id="progressPercent">0%</span></div>
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+</div>
+
+<div class="bottombar">
+  <button class="primary" id="finishBtn">Завершить тренировку</button>
+</div>
+
+<nav class="tabbar">
+  <button class="tab active" data-tab="workout">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10"/></svg>
+    <span>Тренировка</span>
+  </button>
+  <button class="tab" data-tab="history">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7v5l3 2M21 12a9 9 0 1 1-2.64-6.36"/></svg>
+    <span>История</span>
+  </button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
