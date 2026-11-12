@@ -80,6 +80,10 @@ let state = {
   tab: 'workout'
 };
 
+const REST_DEFAULT = 90;
+let rest = { visible: false, paused: false, done: false, endsAt: 0, remaining: 0, duration: REST_DEFAULT, interval: null, hideTimer: null };
+let audioCtx = null;
+
 function loadLast() {
   try {
     const raw = localStorage.getItem(STORE_LAST);
@@ -155,6 +159,7 @@ function init() {
   renderExercises();
   renderToday();
   updateProgress();
+  renderPlan();
   bindEvents();
   registerSW();
 }
@@ -353,6 +358,7 @@ function onListClick(event) {
   saveDraft(activeWorkout, draft);
   updateProgress();
   updateExerciseCounts();
+  if (cell.done) startRest(REST_DEFAULT);
 }
 
 function finishWorkout() {
@@ -380,10 +386,12 @@ function finishWorkout() {
   saveSessions(sessions);
   clearDraft(activeWorkout);
   draft = makeEmptyDraft(activeWorkout);
+  skipRest();
   renderExercises();
   updateProgress();
   showToast('Тренировка сохранена');
   renderHistory();
+  renderPlan();
 }
 
 function countDone() {
@@ -472,6 +480,212 @@ function renderHistory() {
   });
 }
 
+function totalSets(workout) {
+  return workout.exercises.reduce((sum, ex) => sum + ex.sets, 0);
+}
+
+function shortDate(iso) {
+  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' }).format(new Date(iso)).replace('.', '');
+}
+
+function workoutState(workout) {
+  const d = loadDraft(workout);
+  let done = 0;
+  let total = 0;
+  workout.exercises.forEach((ex, i) => {
+    total += ex.sets;
+    done += d.sets[i].filter(s => s.done).length;
+  });
+  if (done > 0) return { type: 'partial', label: `${done}/${total}` };
+  const sessions = loadSessions().filter(s => s.workoutId === workout.id);
+  if (sessions.length) {
+    const last = sessions.slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    return { type: 'done', label: shortDate(last.date) };
+  }
+  return { type: 'new', label: 'не начата' };
+}
+
+function renderPlan() {
+  const box = $('#planList');
+  if (!box) return;
+  box.innerHTML = '';
+  const sessions = loadSessions();
+  const doneIds = new Set(sessions.map(s => s.workoutId));
+  $('#planSummary').textContent = `${doneIds.size} из 12 тренировок`;
+
+  for (let week = 1; week <= 4; week++) {
+    const workouts = PROGRAM.filter(w => w.week === week);
+    const weekDone = workouts.filter(w => doneIds.has(w.id)).length;
+    const card = document.createElement('div');
+    card.className = 'week-card';
+
+    const top = document.createElement('div');
+    top.className = 'week-top';
+    top.innerHTML = `<div class="week-name">Неделя ${week}</div><div class="week-done">${weekDone} из 3</div>`;
+    card.appendChild(top);
+
+    workouts.forEach(w => {
+      const st = workoutState(w);
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'plan-item' + (w.week === state.week && w.num === state.workout ? ' current' : '');
+      item.innerHTML = `
+        <div class="plan-num">${w.num}</div>
+        <div class="plan-body">
+          <div class="plan-title">Тренировка ${w.num}</div>
+          <div class="plan-meta">${w.exercises.length} упражнений · ${totalSets(w)} подходов</div>
+        </div>
+        <div class="plan-status ${st.type}">${st.label}</div>
+        <div class="plan-chevron">›</div>
+      `;
+      item.addEventListener('click', () => {
+        state.week = w.week;
+        state.workout = w.num;
+        saveLast();
+        switchWorkout();
+        switchTab('workout');
+      });
+      card.appendChild(item);
+    });
+
+    box.appendChild(card);
+  }
+}
+
+function restRemainingMs() {
+  if (!rest.visible) return 0;
+  if (rest.paused) return rest.remaining;
+  return Math.max(0, rest.endsAt - Date.now());
+}
+
+function formatRest(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function paintRest() {
+  const bar = $('#restBar');
+  if (!bar) return;
+  bar.hidden = !rest.visible;
+  if (!rest.visible) return;
+  $('#restTime').textContent = formatRest(restRemainingMs());
+  $('#restToggle').textContent = rest.done ? 'Ок' : (rest.paused ? 'Старт' : 'Пауза');
+  $('#restLabel').textContent = rest.done ? 'Отдых закончен' : (rest.paused ? 'Пауза' : 'Отдых');
+  bar.classList.toggle('done', rest.done);
+}
+
+function startRest(seconds) {
+  ensureAudio();
+  const dur = seconds || REST_DEFAULT;
+  clearTimeout(rest.hideTimer);
+  rest.visible = true;
+  rest.done = false;
+  rest.paused = false;
+  rest.duration = dur;
+  rest.remaining = dur * 1000;
+  rest.endsAt = Date.now() + dur * 1000;
+  if (rest.interval) clearInterval(rest.interval);
+  rest.interval = setInterval(tickRest, 250);
+  paintRest();
+}
+
+function tickRest() {
+  if (!rest.visible || rest.done) return;
+  if (restRemainingMs() <= 0) {
+    finishRest();
+    return;
+  }
+  paintRest();
+}
+
+function finishRest() {
+  rest.done = true;
+  rest.paused = false;
+  rest.remaining = 0;
+  if (rest.interval) {
+    clearInterval(rest.interval);
+    rest.interval = null;
+  }
+  paintRest();
+  beepRest();
+  if (navigator.vibrate) {
+    try { navigator.vibrate([120, 80, 120]); } catch (e) {}
+  }
+  clearTimeout(rest.hideTimer);
+  rest.hideTimer = setTimeout(() => {
+    rest.visible = false;
+    paintRest();
+  }, 4000);
+}
+
+function toggleRest() {
+  if (rest.done) {
+    rest.visible = false;
+    paintRest();
+    return;
+  }
+  if (rest.paused) {
+    rest.endsAt = Date.now() + rest.remaining;
+    rest.paused = false;
+    ensureAudio();
+  } else {
+    rest.remaining = Math.max(0, rest.endsAt - Date.now());
+    rest.paused = true;
+  }
+  paintRest();
+}
+
+function addRest(seconds) {
+  if (!rest.visible || rest.done) return;
+  if (rest.paused) rest.remaining = Math.max(0, rest.remaining + seconds * 1000);
+  else rest.endsAt += seconds * 1000;
+  paintRest();
+}
+
+function skipRest() {
+  rest.visible = false;
+  rest.done = false;
+  rest.paused = false;
+  if (rest.interval) {
+    clearInterval(rest.interval);
+    rest.interval = null;
+  }
+  clearTimeout(rest.hideTimer);
+  paintRest();
+}
+
+function ensureAudio() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) {}
+}
+
+function beepRest() {
+  if (!audioCtx) return;
+  try {
+    const t0 = audioCtx.currentTime;
+    [880, 1174].forEach((freq, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const t = t0 + i * 0.22;
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.18, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.2);
+    });
+  } catch (e) {}
+}
+
 function showToast(text) {
   const toast = $('#toast');
   toast.textContent = text;
@@ -485,10 +699,16 @@ function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   const isWorkout = tab === 'workout';
   $('#workoutView').hidden = !isWorkout;
-  $('#historyView').hidden = isWorkout;
+  $('#planView').hidden = tab !== 'plan';
+  $('#historyView').hidden = tab !== 'history';
   $('#progressBar').style.display = isWorkout ? '' : 'none';
   document.querySelector('.bottombar').style.display = isWorkout ? '' : 'none';
-  if (!isWorkout) renderHistory();
+  if (tab === 'plan') {
+    renderPlan();
+    const current = document.querySelector('.plan-item.current');
+    if (current) setTimeout(() => current.scrollIntoView({ block: 'center' }), 50);
+  }
+  if (tab === 'history') renderHistory();
   window.scrollTo({ top: 0 });
 }
 
@@ -554,6 +774,14 @@ function bindEvents() {
   $('#exerciseList').addEventListener('input', onListInput);
   $('#exerciseList').addEventListener('click', onListClick);
   $('#finishBtn').addEventListener('click', finishWorkout);
+  $('#restBar').addEventListener('click', (event) => {
+    const btn = event.target.closest('button[data-rest]');
+    if (!btn) return;
+    const value = btn.dataset.rest;
+    if (value === 'toggle') toggleRest();
+    else if (value === 'skip') skipRest();
+    else addRest(Number(value));
+  });
   document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
   $('#exportBtn').addEventListener('click', exportData);
   $('#importInput').addEventListener('change', (e) => {

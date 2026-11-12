@@ -1,4 +1,4 @@
-const CACHE = 'fullbody-v2';
+const CACHE = 'fullbody-v3';
 const ASSETS = [
   './',
   './index.html',
